@@ -53,7 +53,8 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
         try {
             logger.info("Received request - httpMethod = {}, \n body = {}",
                     requestEvent.getHttpMethod(), requestEvent.getBody());
-            if (requestEvent.getHttpMethod().equalsIgnoreCase("GET")
+            if ((StringUtil.isNullOrEmpty(requestEvent.getHttpMethod()) // For case when GET request comes from HTTP Api gateway
+                    || requestEvent.getHttpMethod().equalsIgnoreCase("GET"))
                     && StringUtil.isNullOrEmpty(requestEvent.getBody())) {
 
                 GetObjectRequest request = GetObjectRequest.builder()
@@ -80,7 +81,8 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
                         .withMultiValueHeaders(Map.of("Content-Type", List.of(getContentTypeFromFileName(fileName))))
                         .withIsBase64Encoded(true);
 
-            } else if (requestEvent.getHttpMethod().equalsIgnoreCase("PUT")
+            } else if (!StringUtil.isNullOrEmpty(requestEvent.getHttpMethod())
+                    && requestEvent.getHttpMethod().equalsIgnoreCase("PUT")
                     && !StringUtil.isNullOrEmpty(requestEvent.getBody())) {
 
 
