@@ -12,20 +12,19 @@ import org.acme.model.MediaOutput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.http.HttpStatusCode;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Base64;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
 public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
 
@@ -57,20 +56,39 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
                     || requestEvent.getHttpMethod().equalsIgnoreCase("GET"))
                     && StringUtil.isNullOrEmpty(requestEvent.getBody())) {
 
+
                 GetObjectRequest request = GetObjectRequest.builder()
                         .bucket(bucketName)
                         .key(fileName)
                         .build();
 
                 logger.info("Before s3 get object");
-//            InputStream inputStream = s3.getObject(request, ResponseTransformer.toInputStream());
+//                InputStream inputStream = s3.getObject(request, ResponseTransformer.toInputStream());
                 ResponseBytes<GetObjectResponse> response = s3.getObjectAsBytes(request);
 
                 byte[] responseBytes = response.asByteArray();
 
                 logger.info("Received download data = " + responseBytes);
 
-                String b64String = Base64.getEncoder().encodeToString(responseBytes);
+                String b64String = "";
+
+                int chunk = 1;
+                int chunkSize = responseBytes.length;
+                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK"))) {
+                    chunk = Integer.parseInt((String) requestEvent.getHeaders().get("CHUNK"));
+                    if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK-SIZE"))) {
+                        chunkSize = Integer.parseInt((String) requestEvent.getHeaders().get("CHUNK-SIZE"));
+                        b64String = Base64.getEncoder().encodeToString(Arrays.copyOfRange(responseBytes, (chunk-1)*chunkSize, chunk*chunkSize));
+                    } else {
+                        return responseEvent.withBody("CHUNK-SIZE header cannot be empty when CHUNK header is set for GET requests!")
+                                .withStatusCode(HttpStatusCode.BAD_REQUEST)
+                                .withHeaders(Map.of("Content-Type", "text/plain"))
+                                .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
+                                .withIsBase64Encoded(false);
+                    }
+                } else {
+                    b64String = Base64.getEncoder().encodeToString(responseBytes);
+                }
 
                 logger.info("Encoded download data = " + b64String);
                 logger.info("Encoded download data length = " + b64String.length());
@@ -86,7 +104,21 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
                     && !StringUtil.isNullOrEmpty(requestEvent.getBody())) {
 
 
-                return responseEvent.withBody("File uploaded successfully : " + fileName)
+                String key = fileName;
+                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK"))) {
+                    key = getChunkFileName(fileName, requestEvent.getHeaders().get("CHUNK"));
+                }
+                byte[] decodedBytes = Base64.getDecoder().decode(requestEvent.getBody()); //fileInputStream.readAllBytes());
+                logger.info("Decoded upload data = " + decodedBytes);
+                PutObjectRequest request = PutObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key(key)
+                        .build();
+
+                s3.putObject(request, RequestBody.fromBytes(decodedBytes));
+//                s3.putObject(request, RequestBody.fromInputStream(fileInputStream, -1));
+
+                return responseEvent.withBody("File uploaded successfully : " + bucketName + "/" + key)
                         .withStatusCode(HttpStatusCode.OK)
                         .withHeaders(Map.of("Content-Type", "text/plain"))
                         .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
@@ -255,6 +287,16 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
         else if(fn.toLowerCase(Locale.ROOT).endsWith(".png")) return "image/png";
         else if(fn.toLowerCase(Locale.ROOT).endsWith(".mp4")) return "video/mp4";
         else return "application/octet-stream";
+    }
+
+    private String getChunkFileName(String fn, String chunk) {
+        int slashIndex = fn.lastIndexOf("/");
+        if(slashIndex < 0) return "TMP/".concat(fn).concat(".").concat(chunk);
+        else {
+            String path = fn.substring(0, slashIndex);
+            String file = fn.substring(slashIndex + 1);
+            return path.concat("/TMP/").concat(file).concat(".").concat(chunk);
+        }
     }
 
 }
