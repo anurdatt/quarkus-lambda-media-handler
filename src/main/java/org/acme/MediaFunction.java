@@ -31,8 +31,38 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
     Logger logger = LoggerFactory.getLogger(MediaFunction.class);
     ObjectMapper mapper = new ObjectMapper();
 
+    Map corsHeaders = Map.of("Access-Control-Allow-Origin", "*",
+            "Access-Control-Allow-Credentials", "true",
+            "Access-Control-Allow-Headers", "*",
+            "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+            "Access-Control-Max-Age", "100000");
+
+    Map corsHeadersMV = Map.of("Access-Control-Allow-Origin", List.of("*"),
+            "Access-Control-Allow-Credentials", List.of("true"),
+            "Access-Control-Allow-Headers", List.of("*"),
+            "Access-Control-Allow-Methods", List.of("GET, POST, PUT, DELETE, OPTIONS, HEAD"),
+            "Access-Control-Max-Age", List.of("100000"));
+
+
+
+
     @Override
     public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent requestEvent, Context context) {
+
+        Map headers =  Map.of("Content-Type", "text/plain", "Access-Control-Allow-Origin", "*",
+                "Access-Control-Allow-Credentials", "true",
+                "Access-Control-Allow-Headers", "*",
+                "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+                "Access-Control-Max-Age", "100000");
+        Map headersMV =  Map.of("Content-Type", List.of("text/plain"), "Access-Control-Allow-Origin", List.of("*"),
+                "Access-Control-Allow-Credentials", List.of("true"),
+                "Access-Control-Allow-Headers", List.of("*"),
+                "Access-Control-Allow-Methods", List.of("GET, POST, PUT, DELETE, OPTIONS, HEAD"),
+                "Access-Control-Max-Age", List.of("100000"));
+
+//        headers.putAll(corsHeaders);
+//        headersMV.putAll(corsHeadersMV);
+
 
         APIGatewayProxyResponseEvent responseEvent = new APIGatewayProxyResponseEvent();
         String bucketName = requestEvent.getQueryStringParameters().get("bucketName");
@@ -41,8 +71,8 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
             logger.info("Bucket name and file name must be provided");
             responseEvent.setStatusCode(HttpStatusCode.BAD_REQUEST);
             responseEvent.setBody("Bucket name and file name must be provided");
-            responseEvent.setHeaders(Map.of("Content-Type", "text/plain"));
-            responseEvent.setMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")));
+            responseEvent.setHeaders(headers);
+            responseEvent.setMultiValueHeaders(headersMV);
             responseEvent.setIsBase64Encoded(false);
             return responseEvent;
         }
@@ -74,16 +104,18 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
 
                 int chunk = 1;
                 int chunkSize = responseBytes.length;
-                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK"))) {
-                    chunk = Integer.parseInt((String) requestEvent.getHeaders().get("CHUNK"));
-                    if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK-SIZE"))) {
-                        chunkSize = Integer.parseInt((String) requestEvent.getHeaders().get("CHUNK-SIZE"));
-                        b64String = Base64.getEncoder().encodeToString(Arrays.copyOfRange(responseBytes, (chunk-1)*chunkSize, chunk*chunkSize));
+                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("chunk"))) {
+                    chunk = Integer.parseInt((String) requestEvent.getHeaders().get("chunk"));
+                    if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("chunk-size"))) {
+                        chunkSize = Integer.parseInt((String) requestEvent.getHeaders().get("chunk-size"));
+                        b64String = Base64.getEncoder().encodeToString(Arrays.copyOfRange(responseBytes,
+                                (chunk-1)*chunkSize,
+                                chunk*chunkSize > responseBytes.length ? responseBytes.length : chunk*chunkSize));
                     } else {
                         return responseEvent.withBody("CHUNK-SIZE header cannot be empty when CHUNK header is set for GET requests!")
                                 .withStatusCode(HttpStatusCode.BAD_REQUEST)
-                                .withHeaders(Map.of("Content-Type", "text/plain"))
-                                .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
+                                .withHeaders(headers)
+                                .withMultiValueHeaders(headersMV)
                                 .withIsBase64Encoded(false);
                     }
                 } else {
@@ -93,10 +125,23 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
                 logger.info("Encoded download data = " + b64String);
                 logger.info("Encoded download data length = " + b64String.length());
 
+                Map headersMedia =  Map.of("Content-Type", getContentTypeFromFileName(fileName),
+                        "Access-Control-Allow-Origin", "*",
+                        "Access-Control-Allow-Credentials", "true",
+                        "Access-Control-Allow-Headers", "*",
+                        "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+                        "Access-Control-Max-Age", "100000");
+                Map headersMediaMV =  Map.of("Content-Type", List.of(getContentTypeFromFileName(fileName)),
+                        "Access-Control-Allow-Origin", List.of("*"),
+                        "Access-Control-Allow-Credentials", List.of("true"),
+                        "Access-Control-Allow-Headers", List.of("*"),
+                        "Access-Control-Allow-Methods", List.of("GET, POST, PUT, DELETE, OPTIONS, HEAD"),
+                        "Access-Control-Max-Age", List.of("100000"));
+
                 return responseEvent.withBody(b64String)
                         .withStatusCode(HttpStatusCode.OK)
-                        .withHeaders(Map.of("Content-Type", getContentTypeFromFileName(fileName)))
-                        .withMultiValueHeaders(Map.of("Content-Type", List.of(getContentTypeFromFileName(fileName))))
+                        .withHeaders(headersMedia)
+                        .withMultiValueHeaders(headersMediaMV)
                         .withIsBase64Encoded(true);
 
             } else if (!StringUtil.isNullOrEmpty(requestEvent.getHttpMethod())
@@ -105,8 +150,8 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
 
 
                 String key = fileName;
-                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("CHUNK"))) {
-                    key = getChunkFileName(fileName, requestEvent.getHeaders().get("CHUNK"));
+                if (!StringUtil.isNullOrEmpty(requestEvent.getHeaders().get("chunk"))) {
+                    key = getChunkFileName(fileName, requestEvent.getHeaders().get("chunk"));
                 }
                 byte[] decodedBytes = Base64.getDecoder().decode(requestEvent.getBody()); //fileInputStream.readAllBytes());
                 logger.info("Decoded upload data = " + decodedBytes);
@@ -120,14 +165,14 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
 
                 return responseEvent.withBody("File uploaded successfully : " + bucketName + "/" + key)
                         .withStatusCode(HttpStatusCode.OK)
-                        .withHeaders(Map.of("Content-Type", "text/plain"))
-                        .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
+                        .withHeaders(headers)
+                        .withMultiValueHeaders(headersMV)
                         .withIsBase64Encoded(false);
             } else {
                 return responseEvent.withBody("HttpMethod or Request body is invalid!")
                         .withStatusCode(HttpStatusCode.BAD_REQUEST)
-                        .withHeaders(Map.of("Content-Type", "text/plain"))
-                        .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
+                        .withHeaders(headers)
+                        .withMultiValueHeaders(headersMV)
                         .withIsBase64Encoded(false);
             }
 
@@ -136,8 +181,8 @@ public class MediaFunction implements RequestHandler<APIGatewayProxyRequestEvent
 
             return responseEvent.withBody("Failed to download file: " + e.getMessage())
                     .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
-                    .withHeaders(Map.of("Content-Type", "text/plain"))
-                    .withMultiValueHeaders(Map.of("Content-Type", List.of("text/plain")))
+                    .withHeaders(headers)
+                    .withMultiValueHeaders(headersMV)
                     .withIsBase64Encoded(false);
         } finally {
             s3.close();
